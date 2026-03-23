@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ._nodeinfo import NodeInfo
-from asyncio import Event, Task
 import httpx
 from semver import Version
 
@@ -21,7 +20,7 @@ class Amasto:
     _base_url: str
     _api_key: str
     _mastodon_version: Version | None
-    _initialization_event: Event
+    _initialization_event: bool
     _http: httpx.AsyncClient
 
     def __init__(
@@ -43,7 +42,7 @@ class Amasto:
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
         )
-        self._initialization_event = Event()
+        self._initialization_event = False
 
         self.api = ApiNamespace(self)
         self.oauth = OAuthNamespace(self)
@@ -51,17 +50,17 @@ class Amasto:
 
         if mastodon_version is not None:
             self._mastodon_version = mastodon_version
-            self._initialization_event.set()
+            self._initialization_event = True
         else:
-            Task(self._initialize())
+            self._initialize()
 
-    async def _initialize(
+    def _initialize(
         self,
         /,
     ) -> None:
-        if self._initialization_event.is_set():
+        if self._initialization_event:
             return
-        nodeinfo = await NodeInfo.fetch(self._base_url)
+        nodeinfo = NodeInfo.fetch(self._base_url)
         if nodeinfo.software.name == "mastodon":
             self._mastodon_version = Version.parse(nodeinfo.software.version)
-        self._initialization_event.set()
+        self._initialization_event = True

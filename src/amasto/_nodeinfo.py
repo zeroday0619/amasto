@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from httpx import AsyncClient
+from httpx import AsyncClient, Client, Response
 from pydantic import BaseModel
 from typing import Any, Final
 
@@ -41,31 +41,48 @@ class NodeInfo(BaseModel):
     ) -> bool:
         return self.openRegistrations
 
+    @staticmethod
+    def _nodeinfo_url(jrd_response: Response):
+        jrd_response.raise_for_status()
+        jrd = jrd_response.json()
+        jrd_links = jrd.get("links", [])
+        latest_link: Any = None
+        for link in jrd_links:
+            link_rel = link.get("rel")
+            if link_rel in _NODEINFO_SCHEMATA:
+                if latest_link is None or _NODEINFO_SCHEMATA.index(link_rel) > _NODEINFO_SCHEMATA.index(
+                    latest_link["rel"]
+                ):
+                    latest_link = link
+        if latest_link is None:
+            raise ValueError("No supported NodeInfo schema found in JRD links")
+        nodeinfo_url = latest_link.get("href")
+        if nodeinfo_url is None:
+            raise ValueError("NodeInfo link is missing 'href' field")
+        return nodeinfo_url
+
     @classmethod
-    async def fetch(
+    async def afetch(
         cls,
         base_url: str,
         /,
     ) -> NodeInfo:
         async with AsyncClient() as client:
             jrd_response = await client.get(f"{base_url}/.well-known/nodeinfo")
-            jrd_response.raise_for_status()
-            jrd = jrd_response.json()
-            jrd_links = jrd.get("links", [])
-            latest_link: Any = None
-            for link in jrd_links:
-                link_rel = link.get("rel")
-                if link_rel in _NODEINFO_SCHEMATA:
-                    if latest_link is None or _NODEINFO_SCHEMATA.index(link_rel) > _NODEINFO_SCHEMATA.index(
-                        latest_link["rel"]
-                    ):
-                        latest_link = link
-            if latest_link is None:
-                raise ValueError("No supported NodeInfo schema found in JRD links")
-            nodeinfo_url = latest_link.get("href")
-            if nodeinfo_url is None:
-                raise ValueError("NodeInfo link is missing 'href' field")
-            nodeinfo_response = await client.get(nodeinfo_url)
+            nodeinfo_response = await client.get(cls._nodeinfo_url(jrd_response=jrd_response))
+            nodeinfo_response.raise_for_status()
+            nodeinfo = nodeinfo_response.json()
+            return cls.model_validate(nodeinfo)
+
+    @classmethod
+    def fetch(
+        cls,
+        base_url: str,
+        /,
+    ) -> NodeInfo:
+        with Client() as client:
+            jrd_response = client.get(f"{base_url}/.well-known/nodeinfo")
+            nodeinfo_response = client.get(cls._nodeinfo_url(jrd_response=jrd_response))
             nodeinfo_response.raise_for_status()
             nodeinfo = nodeinfo_response.json()
             return cls.model_validate(nodeinfo)
